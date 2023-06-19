@@ -15,22 +15,28 @@ format: html
 *Make sure to load the packages that you need and `glimpse()` the data or `View()` it to make sure that it downloaded properly.* 
 
 ```{r}
-#Download data from the V-Dem Dataset
+# Load packages
+library(vdemdata)  # to download V-Dem data
 
-# Load required packages
-library(vdemdata)
+# Download the data
+democracy <- vdem |>
+  filter(year >= 2003) |>
+  select(
+    country = country_name,
+    vdem_ctry_id = country_id,
+    year,
+    polyarchy = v2x_polyarchy,
+    women_representation1 = v2x_api_sd,
+    women_representation2 = v2x_mpi
+  )
 
-# Identify two measures of democracy from V-Dem dataset
-# Let's choose "GDP per capita" (gdp_pc) and "Female labor force participation rate" (flfp)
+# Select the most recent 20 years of data
+democracy_recent <- democracy |>
+  filter(year >= 2003 & year <= 2022)
 
-# Download the variables for the most recent 20 years
-vdem_data <- vdemdata::vdem(data = c("gdp_pc", "flfp"), years = 2003:2022)
+# Glimpse the data
+glimpse(democracy_recent)
 
-# Glimpse the data to ensure it downloaded properly
-glimpse(vdem_data)
-
-# View the data
-View(vdem_data)
 ```
 
 ## Step 2: Download data from the World Bank
@@ -41,16 +47,25 @@ View(vdem_data)
 
 ```{r}
 library(WDI)
+library(countrycode)
+library(dplyr)
 
-# Download the variable on women's representation in parliament.
-women_representation <- WDI(indicator = "SG.GEN.PARL.ZS", country = "all", start = 2003, end = 2022)
+# Download the data for women's representation in parliament
+women_representation <- WDI(country = "all", indicator = "SG.GEN.PARL.ZS")
 
-# Download an additional measure related to women's empowerment.
-# Here, we will download the variable on the share of women in managerial positions.
-women_empowerment <- WDI(indicator = "SL.EMP.MNG.FEM.ZS", country = "all", start = 2003, end = 2022)
+# Add ISO3 country codes
+women_representation <- women_representation %>%
+  mutate(
+    iso3c = countrycode(
+      sourcevar = country,
+      origin = "wb",
+      destination = "iso3c"
+    )
+  ) %>%
+  select(country, iso3c, everything())
 
-# Check the data
-glimpse(wb_data)
+# Inspect the data
+glimpse(women_representation)
 
 ```
 Check the number of countries for which we have data for women's representation in parliament.
@@ -63,31 +78,35 @@ nrow(women_empowerment)
 
 As we can see, we have data for 228 countries for women's representation in parliament, and for 212 countries for the share of women in managerial positions. This is enough data to conduct our analysis.
 
+
+*The percentage of women in parliament has increased significantly over the past few decades. In 1995, only 11.3% of seats in national parliaments were held by women. By 2020, this number had increased to 25.5%. This is a major achievement, but there is still a long way to go before women are equally represented in government.
+
+There are a number of factors that have contributed to the increase in women's representation in parliament. One factor is the passage of laws that mandate a certain percentage of women in parliament. Another factor is the increasing participation of women in political parties and in the electoral process. Finally, there is a growing awareness of the importance of gender equality and the need for women's voices to be heard in government.*
+
 ## Step 3: Merge the data
 
 *Now add country codes using the `countrycode` package and merge the data using `left_join()`.* 
 
 ```{r}
-#Merge the data
-
-# Load required packages
-library(countrycode)
 library(dplyr)
-
-# Add country codes to both datasets
-vdem_data$country <- countrycode::countrycode(vdem_data$country_name, "country.name", "iso2c")
-wb_data$country <- countrycode::countrycode(wb_data$country, "iso3c", "iso2c")
+library(countrycode)
 
 # Merge the data using left_join()
-merged_data <- left_join(vdem_data, wb_data, by = c("year", "country"))
+merged_data <- left_join(democracy_recent, women_representation, by = c("country" = "country"))
 
-# Check the merged data
+# Add ISO3 country codes
+merged_data <- merged_data |>
+  mutate(
+    iso3c = countrycode(
+      sourcevar = country,
+      origin = "wb",
+      destination = "iso3c"
+    )
+  ) |>
+  relocate(iso3c, .after = country)
+
+# View the merged data
 glimpse(merged_data)
-
-# Check the number of rows in the merged data frame.
-nrow(data)
-
-# [1] 212
 
 ```
 As we can see, the merged data frame has 212 rows, which is the same as the number of rows in the women_empowerment data frame. This means that the merge was successful and that all of the data is now in a single data frame.
@@ -98,15 +117,22 @@ As we can see, the merged data frame has 212 rows, which is the same as the numb
 *Use `group_by()`, `summarize()` and `arrange()` to glean insights about your data. For example, how do regions compare on mean values of women's representation and how do these values relate to the values of other variables in your data set? Which countries stand out in terms of women's representation? Etc.* 
 
 ```{r}
-# Group by region and summarize variables
-summary_data <- merged_data %>%
-  group_by(region) %>%
-  summarize(mean_women_representation = mean(SG.GEN.PARL.ZS, na.rm = TRUE),
-            mean_women_empowerment = mean(IC.FRM.OUTG.ZS, na.rm = TRUE)) %>%
-  arrange(desc(mean_women_representation))
+library(dplyr)
+library(readr)
 
-# View the summarized data
-View(summary_data)
+dem_summary <- merged_data %>%
+  group_by(country) %>%
+  summarize(
+    mean_women_representation1 = mean(women_representation1, na.rm = TRUE),
+    mean_women_representation2 = mean(women_representation2, na.rm = TRUE)
+  ) %>%
+  arrange(desc(mean_women_representation1))
+
+# Write the summarized data to a CSV file
+write_csv(dem_summary, "dem_summary.csv")
+
+# View the summarized and arranged data
+glimpse(dem_summary)
 
 
 ```
@@ -114,22 +140,12 @@ View(summary_data)
 
 ## Step 5: Interpret your data
 
-*Write a paragraph or so relating your insights to the Norris reading about electoral reform and women's representation. Picking a handful of country cases from your data, how does your analysis relate to her arguments about the relevance of electoral systems, statutory quotas, reserved seats or voluntary quotas?
+*Write a paragraph or so relating your insights to the Norris reading about electoral reform and women's representation. Picking a handful of country cases from your data, how does your analysis relate to her arguments about the relevance of electoral systems, statutory quotas, reserved seats or voluntary quotas?*
 
-Step 5: Interpret your data
+*The analysis of the data on women's representation in national parliaments and its relation to other variables provides valuable insights into the factors influencing women's political empowerment. By summarizing and arranging the data, we can identify countries that excel in terms of women's representation. This analysis allows us to evaluate the effectiveness of measures such as electoral systems, statutory quotas, reserved seats, or voluntary quotas in promoting gender equality in political participation.
 
-Based on the analysis, we can observe the following insights:
- 1. Regions vary in terms of mean values of women's representation and women's empowerment.
- 2. Some regions may have higher mean values of women's representation but lower mean values of women's empowerment.
- 3. The values of women's representation and women's empowerment may differ across countries within a region.
- 4. Certain countries stand out in terms of women's representation, having high values compared to other countries in the same region.
- 5. The analysis provides a basis for further investigation into the relationship between women's representation, women's empowerment, and other variables in the dataset.
+By selecting specific country cases from the data, we can examine how different measures impact women's representation. We can compare the mean values of women's representation in these countries and analyze their relationship with other variables in the dataset. This assessment helps us understand the effectiveness of various measures in advancing women's political empowerment.
 
-Relating to the Norris reading about electoral reform and women's representation, the analysis allows us to examine the relevance of different factors. By picking a handful of country cases from the data, we can explore how electoral systems, statutory quotas, reserved seats, and voluntary quotas relate to women's representation. For example, we can compare countries with proportional representation systems and mandatory quotas to countries with majoritarian systems and voluntary quotas. The analysis can help identify patterns and assess the impact of these factors on women's representation in national parliaments.
+In relation to Norris' arguments on electoral reform and women's representation, this analysis allows us to evaluate the practical implications of different measures. We can assess the extent to which electoral systems, statutory quotas, reserved seats, or voluntary quotas have contributed to women's representation in national parliaments and their effectiveness in achieving gender equality in political decision-making processes.
 
-Here are a few country cases from my data that illustrate the points I have made:
-  Rwanda has a PR electoral system and a statutory quota of 30% for women in government. 
-  Bolivia has a PR electoral system and a voluntary quota of 50% for women in government.
-  Sweden has a PR electoral system and no quotas for women in government. 
-  
-These country cases show that there is no single solution to increasing women's representation in government. However, electoral reform, statutory quotas, reserved seats, and voluntary quotas can all play a role in increasing women's representation.*
+Overall, this analysis provides valuable insights that can inform policy discussions and efforts to enhance women's political empowerment worldwide.*
